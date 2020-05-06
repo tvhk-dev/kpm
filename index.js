@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 const
     fs = require("fs"),
     xml2json = require("xml2json"),
