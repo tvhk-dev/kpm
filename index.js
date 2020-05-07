@@ -1,19 +1,16 @@
 #!/usr/bin/env node
 const
     fs = require("fs"),
-    xml2json = require("xml2json"),
+    xmlParser = require('fast-xml-parser'),
     argv = require('yargs'),
     wget = require('node-wget-promise'),
     path = require('path'),
     randomstring = require("randomstring"),
     unzip = require('extract-zip'),
-    rmdir = require('rimraf');
+    rmdir = require('rimraf'),
+    zlib = require('zlib'),
+    terminalPrompt = require('prompt-sync')();
 
-
-var xml = fs.readFileSync("addons.xml");
-
-// xml to json
-var repoJSON = xml2json.toJson(xml);
 
 const config = {
     addonMask: {
@@ -40,19 +37,14 @@ const config = {
 };
 
 var current = {
-    repo: JSON.parse(repoJSON).addons.addon,
+    repo: {},
     repoIDs: [],
     argv: argv.argv,
     installQueue: [],
     tmp: "",
-    kodiVersion: ""
+    kodiVersion: "",
+    isOverwrite: false
 };
-
-var same = 0;
-for (var i = 0; i < current.repo.length; i++) {
-    current.repoIDs.push(current.repo[i].id);
-}
-
 
 function getAddon(name) {
     var i = current.repoIDs.indexOf(name);
@@ -95,7 +87,7 @@ function walkThroughDeps(tree) {
     }
 }
 
-async function downloadPackage(names) {
+async function installPackage(names) {
     for (var i = 0; i < names.length; i++) {
         const addon = getAddon(names[i]);
         var output = null;
@@ -114,54 +106,106 @@ async function downloadPackage(names) {
     }
 
     var folders = fs.readdirSync(current.tmp, {withFileTypes: true}).filter(dirent => dirent.isDirectory()).map(dirent => dirent.name);
+    var isConflicted = false;
     for (var i = 0; i < folders.length; i++) {
-        fs.renameSync(current.tmp + "/" + folders[i], current.installDestination + "/" + folders[i]);
+        //Folder exist check
+        if (fs.existsSync(current.installDestination + "/" + folders[i])) {
+            isConflicted = true;
+            if (current.isOverwrite) {
+                //Do nothing
+            } else {
+                var ask = terminalPrompt("Some package exist, continue to overwrite **ALL** packages[n]?");
+                if (ask.toString().toLocaleLowerCase() == "y" || ask.toString().toLocaleLowerCase() == "yes") {
+                    current.isOverwrite = true;
+                } else {
+                    break;
+                }
+
+            }
+        }
     }
-    process.stdout.write("Clearing up......");
-    rmdir(current.tmp, function (error) {
-    });
-    console.log('done');
+    if (!isConflicted || (isConflicted && current.isOverwrite)) {
+        for (var i = 0; i < folders.length; i++) {
+            try {
+                rmdir.sync(current.installDestination + "/" + folders[i]);
+                fs.renameSync(current.tmp + "/" + folders[i], current.installDestination + "/" + folders[i]);
+            }
+            catch (e) {
+                console.log("Error: ", e.message);
+                break;
+            }
+        }
+    }
 }
 
-if (!current.argv.to || !current.argv.kodi || current.argv._.length == 0) {
-    if (current.argv.h === true || current.argv.help == true) {
-        console.log(
-            "\n" +
-            "Usage: kpm --to=<dest path> --kodi=<kodi version> package1 [package2...]\n" +
-            "\n" +
-            "    -h / --help    This help\n" +
-            "    -to            Installation destination folder\n" +
-            "    -kodi          Kodi version (16|17|18|19)\n" +
-            "    -extra         Extra package repository URL, in JSON format\n"
-        );
+//================main entry point================//
+
+async function main() {
+    if (!current.argv.to || !current.argv.kodi || current.argv._.length == 0) {
+        if (current.argv.h === true || current.argv.help == true) {
+            console.log(
+                "\n" +
+                "Kodi addon package manager\n" +
+                "\n" +
+                "Usage: kpm --to=<dest path> --kodi=<kodi version> package1 [package2...] [-y]\n" +
+                "\n" +
+                "    -h / --help    This help\n" +
+                "    -to            Installation destination folder\n" +
+                "    -kodi          Kodi version (16|17|18|19)\n" +
+                "    -extra         Extra package repository URL, in JSON format\n" +
+                "    -y             Default yes to overwite package if exist\n" +
+                "\n"
+            );
+        } else {
+            console.log("Usage: kpm --to=<dest path> --kodi=<kodi version> package1 [package2...] [-y]");
+        }
     } else {
-        console.log("Usage: kpm --to=<dest path> --kodi=<kodi version> package1 [package2...]");
+        //real things
+        if (!fs.existsSync(current.argv.to)) {
+            console.log("Error: Installation destination folder not exist");
+            process.exit();
+        }
+        if (config.kodiVersionString[current.argv.kodi] == undefined) {
+            console.log("Error: Invalid Kodi version (16|17|18|19)");
+            process.exit();
+        }
+        if (current.argv.y === true) current.isOverwrite = true;
+        current.kodiVersion = config.kodiVersionString[current.argv.kodi];
+        current.tmp = path.resolve(current.argv.to) + "/.tmp_" + randomstring.generate(16);
+        current.installDestination = path.resolve(current.argv.to);
+        fs.mkdirSync(current.tmp);
+
+        process.stdout.write("Downloading kodi official repo......");
+        await wget("http://mirrors.kodi.tv/addons/" + current.kodiVersion + "/addons.xml.gz", {output: current.tmp + "/addons.xml.gz"});
+        console.log("done");
+
+        process.stdout.write("Reading repo......");
+        var xml = zlib.unzipSync(fs.readFileSync(current.tmp + "/addons.xml.gz")).toString();
+        current.repo = xmlParser.parse(xml, {
+            ignoreAttributes: false,
+            attributeNamePrefix: "",
+            textNodeName: "$t"
+        }).addons.addon || {};
+        for (var i = 0; i < current.repo.length; i++) {
+            current.repoIDs.push(current.repo[i].id);
+        }
+        console.log("done");
+
+        for (var i = 0; i < current.argv._.length; i++) {
+            current.installQueue.push(current.argv._[i]);
+            walkThroughDeps(resolveDeps(current.argv._[i]));
+        }
+        console.log("List of package to install(" + current.installQueue.length.toString() + "):")
+        for (var i = 0; i < current.installQueue.length; i++) {
+            console.log(current.installQueue[i]);
+        }
+
+        await installPackage(current.installQueue);
+
+        process.stdout.write("Clearing up......");
+        rmdir.sync(current.tmp);
+        console.log('done');
     }
-} else {
-    //real things
-    if (!fs.existsSync(current.argv.to)) {
-        console.log("Error: Installation destination folder not exist");
-        process.exit();
-    }
-    if (config.kodiVersionString[current.argv.kodi] == undefined) {
-        console.log("Error: Invalid Kodi version (16|17|18|19)");
-        process.exit();
-    }
-    current.kodiVersion = config.kodiVersionString[current.argv.kodi];
-    current.tmp = path.resolve(current.argv.to) + "/.tmp_" + randomstring.generate(16);
-    current.installDestination = path.resolve(current.argv.to);
-    fs.mkdirSync(current.tmp);
-    for (var i = 0; i < current.argv._.length; i++) {
-        current.installQueue.push(current.argv._[i]);
-        walkThroughDeps(resolveDeps(current.argv._[i]));
-    }
-    downloadPackage(current.installQueue);
-}
-/*
-for (var i = 0; i < current.argv.length; i++) {
-    current.installQueue.push(current.argv[i]);
-    walkThroughDeps(resolveDeps(current.argv[i]));
 }
 
-console.log(current.installQueue);
-*/
+main();
