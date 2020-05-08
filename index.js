@@ -16,23 +16,12 @@ const config = {
     addonMask: {
         mode: "whitelist",
         list: [
-            'pvr.', 'script.',
-            'plugin.', 'inputstream.',
-            'screensaver.', 'service.',
-            'metadata.', 'vfs.',
-            'weather.', 'skin.',
-            'imagedecoder.', 'game.',
-            'resource.', 'audiodecoder.',
-            'context.', 'visualization.',
+            'pvr.', 'script.', 'plugin.', 'inputstream.', 'screensaver.', 'service.', 'context.', 'visualization.',
+            'metadata.', 'vfs.', 'weather.', 'skin.', 'imagedecoder.', 'game.', 'resource.', 'audiodecoder.',
             'audioencoder.', 'webinterface.'
         ]
     },
-    kodiVersionString: {
-        "16": "jarvis",
-        "17": "krypton",
-        "18": "leia",
-        "19": "matrix",
-    },
+    kodiVersionString: {"16": "jarvis", "17": "krypton", "18": "leia", "19": "matrix"},
     kodiOfficialRepo: "https://mirrors.kodi.tv/addons",//http://mirrors.kodi.tv/addons/<codename>/addons.xml.gz
 };
 
@@ -43,11 +32,25 @@ var current = {
     installQueue: [],
     tmp: "",
     kodiVersion: "",
-    isOverwrite: false
+    isOverwrite: false,
+    overlayRepo: {
+        /* Format example
+        "plugin.video.tvhk": {
+            extension: [
+                {
+                    point: "xbmc.addon.metadata",
+                    path: "https://codeload.github.com/tvhk-dev/plugin.video.tvhk/zip/master",
+                }
+            ],
+            requires: {}
+        }
+        */
+    }
 };
 
 function getAddon(name) {
     var i = current.repoIDs.indexOf(name);
+    if (typeof current.overlayRepo[name] == "object") return current.overlayRepo[name];
     if (typeof i == "number") {
         return current.repo[i];
     }
@@ -55,7 +58,7 @@ function getAddon(name) {
 }
 
 function resolveDeps(name) {
-    var addon = getAddon(name) || {requires: {import: {}}};
+    var addon = getAddon(name) || {requires: {import: {}}, extension: []};
     var deps = addon.requires.import || [];
     var result = {};
     for (var i = 0; i < deps.length; i++) {
@@ -87,21 +90,40 @@ function walkThroughDeps(tree) {
     }
 }
 
-async function installPackage(names) {
-    for (var i = 0; i < names.length; i++) {
-        const addon = getAddon(names[i]);
-        var output = null;
+async function installPackage(addonIDs) {
+    for (var i = 0; i < addonIDs.length; i++) {
+        const addon = getAddon(addonIDs[i]) || {requires: {import: {}}, extension: []};
+        var url = null;
         for (var j = 0; j < addon.extension.length; j++) {
             if (addon.extension[j].point == "xbmc.addon.metadata") {
-                output = addon.extension[j].path;
+                url = addon.extension[j].path;
             }
         }
-        process.stdout.write("Downloading " + names[i] + "......");
-        if (output) {
-            await wget(config.kodiOfficialRepo + "/" + current.kodiVersion + "/" + output, {output: current.tmp + "/" + path.basename(output)});
+        process.stdout.write("Downloading " + addonIDs[i] + "......");
+        if (url) {
+            if (url.indexOf("https://") == 0 || url.indexOf("http://") == 0) {
+                await wget(url, {output: current.tmp + "/" + path.basename(url)});
+            } else {
+                await wget(config.kodiOfficialRepo + "/" + current.kodiVersion + "/" + url, {output: current.tmp + "/" + path.basename(url)});
+            }
             console.log("done");
-            await unzip(current.tmp + "/" + path.basename(output), {dir: current.tmp})
+            //Code to solve non-standard folder name issue(e.g. rename "plugin.video.tvhk-branchA" to "plugin.video.tvhk")
+            //Create a temp sub-folder to handle a SINGLE zip
+            fs.mkdirSync(current.tmp + "/.extracting");
+            //Unzip the zip into temp sub-folder, find out the real package folder
+            await unzip(current.tmp + "/" + path.basename(url), {dir: current.tmp + "/.extracting"})
+            var subfolder = fs.readdirSync(current.tmp + "/.extracting", {withFileTypes: true}).filter(dirent => dirent.isDirectory()).map(dirent => dirent.name); //list only folders
+            for (var j = 0; j < subfolder.length; j++) {
+                if (subfolder[j].indexOf(addonIDs[i]) == 0) { //folder name begin with addon id
+                    //rename&move it, then break for loop
+                    fs.renameSync(current.tmp + "/.extracting/" + subfolder[j], current.installDestination + "/" + addonIDs[i]);
+                    break;
+                }
+            }
+            rmdir.sync(current.tmp + "/.extracting");
             console.log('Extraction completed');
+        } else {
+            throw Error('No package file found or file path empty!');
         }
     }
 
@@ -124,6 +146,7 @@ async function installPackage(names) {
             }
         }
     }
+
     if (!isConflicted || (isConflicted && current.isOverwrite)) {
         for (var i = 0; i < folders.length; i++) {
             try {
@@ -147,13 +170,14 @@ async function main() {
                 "\n" +
                 "Kodi addon package manager\n" +
                 "\n" +
-                "Usage: kpm --to=<dest path> --kodi=<kodi version> package1 [package2...] [-y]\n" +
+                "Usage: kpm --to=<dest path> --kodi=<kodi version> [--overlay=<repo_url>]package1 [package2...] [-y]\n" +
                 "\n" +
-                "    -h / --help    This help\n" +
-                "    -to            Installation destination folder\n" +
-                "    -kodi          Kodi version (16|17|18|19)\n" +
-                "    -extra         Extra package repository URL, in JSON format\n" +
-                "    -y             Default yes to overwite package if exist\n" +
+                "    -h / --help       This help\n" +
+                "    --to              Installation destination folder\n" +
+                "    --kodi            Kodi version (16|17|18|19)\n" +
+                "    --overlay         Overlay package repository URL, in JSON format\n" +
+                "    -y                Default yes to overwite package if exist\n" +
+                "" +
                 "\n"
             );
         } else {
@@ -175,11 +199,17 @@ async function main() {
         current.installDestination = path.resolve(current.argv.to);
         fs.mkdirSync(current.tmp);
 
+        if (typeof current.argv.overlay == "string") {
+            process.stdout.write("Downloading overlay repo......");
+            await wget(current.argv.overlay, {output: current.tmp + "/overlayRepo.json"});
+            process.stdout.write("reading......");
+            current.overlayRepo = JSON.parse(fs.readFileSync(current.tmp + "/overlayRepo.json"));
+            console.log("done");
+        }
+
         process.stdout.write("Downloading kodi official repo......");
         await wget("http://mirrors.kodi.tv/addons/" + current.kodiVersion + "/addons.xml.gz", {output: current.tmp + "/addons.xml.gz"});
-        console.log("done");
-
-        process.stdout.write("Reading repo......");
+        process.stdout.write("reading...");
         var xml = zlib.unzipSync(fs.readFileSync(current.tmp + "/addons.xml.gz")).toString();
         current.repo = xmlParser.parse(xml, {
             ignoreAttributes: false,
