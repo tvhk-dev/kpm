@@ -42,7 +42,7 @@ var current = {
                     path: "https://codeload.github.com/tvhk-dev/plugin.video.tvhk/zip/master",
                 }
             ],
-            requires: {}
+            requires: {import:[]}
         }
         */
     }
@@ -102,16 +102,16 @@ async function installPackage(addonIDs) {
         process.stdout.write("Downloading " + addonIDs[i] + "......");
         if (url) {
             if (url.indexOf("https://") == 0 || url.indexOf("http://") == 0) {
-                await wget(url, {output: current.tmp + "/" + path.basename(url)});
+                await wget(url, {output: current.tmp + "/" + addonIDs[i] + ".zip"});
             } else {
-                await wget(config.kodiOfficialRepo + "/" + current.kodiVersion + "/" + url, {output: current.tmp + "/" + path.basename(url)});
+                await wget(config.kodiOfficialRepo + "/" + current.kodiVersion + "/" + url, {output: current.tmp + "/" + addonIDs[i] + ".zip"});
             }
             console.log("done");
             //Code to solve non-standard folder name issue(e.g. rename "plugin.video.tvhk-branchA" to "plugin.video.tvhk")
             //Create a temp sub-folder to handle a SINGLE zip
             fs.mkdirSync(current.tmp + "/.extracting");
             //Unzip the zip into temp sub-folder, find out the real package folder
-            await unzip(current.tmp + "/" + path.basename(url), {dir: current.tmp + "/.extracting"})
+            await unzip(current.tmp + "/" + addonIDs[i] + ".zip", {dir: current.tmp + "/.extracting"})
             var subfolder = fs.readdirSync(current.tmp + "/.extracting", {withFileTypes: true}).filter(dirent => dirent.isDirectory()).map(dirent => dirent.name); //list only folders
             for (var j = 0; j < subfolder.length; j++) {
                 if (subfolder[j].indexOf(addonIDs[i]) == 0) { //folder name begin with addon id

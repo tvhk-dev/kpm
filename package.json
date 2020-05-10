@@ -1,7 +1,8 @@
 {
   "name": "kpm",
-  "version": "0.9",
-  "description": "",
+  "version": "0.9.0",
+  "description": "Standalone Kodi package manager",
+  "repository": "https://github.com/tvhk-dev/kpm.js",
   "main": "kpm.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

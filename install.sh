@@ -13,15 +13,19 @@ extraRepo="https://raw.githubusercontent.com/tvhk-dev/tvhk-kodi-repo/master/kpmR
 #
 # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
+printf 'n\n' | installentware #https://discourse.coreelec.org/t/what-is-entware-and-how-to-install-uninstall-it/1149
+
 cd ~/
 mkdir install
 cd ~/install
-opkg install node-js git sqlite3
-git clone https://github.com/tvhk-dev/kpm.git
+~/.opt/bin/opkg install node git-http node-npm
+
+#TODO: NTP client
+~/.opt/bin/git clone https://github.com/tvhk-dev/kpm.git
 cd ~/install/kpm
-npm install
+~/.opt/bin/npm install
 mkdir ~/install/addons
-./kpm.js --to=~/install/addons --kodi=$kodiVersion --extra=$extraRepo $addons -y
+~/.opt/bin/node ./kpm.js --to=~/install/addons --kodi=$kodiVersion --extra=$extraRepo $addons -y
 cd ~/install/addons
 cp -Rf ./* ~/.kodi/addons/
 systemctl restart kodi
