@@ -15,11 +15,14 @@ const
 const config = {
     addonMask: {
         mode: "whitelist",
-        list: [
+        whitelist: [
             'pvr.', 'script.', 'plugin.', 'inputstream.', 'screensaver.', 'service.', 'context.', 'visualization.',
             'metadata.', 'vfs.', 'weather.', 'skin.', 'imagedecoder.', 'game.', 'resource.', 'audiodecoder.',
             'audioencoder.', 'webinterface.'
-        ]
+        ],
+        blacklist: [
+            'script.module.pil'
+        ],
     },
     kodiVersionString: {"16": "jarvis", "17": "krypton", "18": "leia", "19": "matrix"},
     kodiOfficialRepo: "https://mirrors.kodi.tv/addons",//http://mirrors.kodi.tv/addons/<codename>/addons.xml.gz
@@ -42,7 +45,7 @@ var current = {
                     path: "https://codeload.github.com/tvhk-dev/plugin.video.tvhk/zip/master",
                 }
             ],
-            requires: {import:[]}
+            requires: {import:[{"addon": "script.extendedinfo", "version": "3.0.0"}]}
         }
         */
     }
@@ -64,8 +67,8 @@ function resolveDeps(name) {
     for (var i = 0; i < deps.length; i++) {
         var masked = true;
         var addonName = deps[i].addon;
-        for (var j = 0; j < config.addonMask.list.length; j++) {
-            if (addonName.indexOf(config.addonMask.list[j]) === 0) {
+        for (var j = 0; j < config.addonMask.whitelist.length; j++) {
+            if (addonName.indexOf(config.addonMask.whitelist[j]) === 0 && config.addonMask.blacklist.indexOf(addonName) == -1) {
                 result[addonName] = resolveDeps(addonName);
             }
         }
@@ -222,9 +225,12 @@ async function main() {
         console.log("done");
 
         for (var i = 0; i < current.argv._.length; i++) {
-            current.installQueue.push(current.argv._[i]);
-            walkThroughDeps(resolveDeps(current.argv._[i]));
+            if (current.installQueue.indexOf(current.argv._[i]) == -1) {
+                current.installQueue.push(current.argv._[i]);
+                walkThroughDeps(resolveDeps(current.argv._[i]));
+            }
         }
+
         console.log("List of package to install(" + current.installQueue.length.toString() + "):")
         for (var i = 0; i < current.installQueue.length; i++) {
             console.log(current.installQueue[i]);
